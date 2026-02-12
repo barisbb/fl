@@ -1,0 +1,292 @@
+/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and will be removed in 0.15, please use 'weights' instead.
+  warnings.warn(
+/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and will be removed in 0.15. The current behavior is equivalent to passing `weights=None`.
+  warnings.warn(msg)
+Using device: cuda:0
+Pre-filtered 30767 patches based on country and season (split ignored)
+Loading BEN data for train...
+    237871 patches indexed
+    14805 filtered patches indexed
+    14805 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 59999 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    15720 filtered patches indexed
+    15720 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 15549 patches based on country and season (split ignored)
+Loading BEN data for train...
+    237871 patches indexed
+    7150 filtered patches indexed
+    7150 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 59999 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    15720 filtered patches indexed
+    15720 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 13683 patches based on country and season (split ignored)
+Loading BEN data for train...
+    237871 patches indexed
+    7180 filtered patches indexed
+    7180 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 59999 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    15720 filtered patches indexed
+    15720 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 59999 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    15720 filtered patches indexed
+    15720 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Round 1/40
+----------
+Epoch 1/1
+----------
+training:   0%|          | 0/116 [00:00<?, ?it/s]training:   0%|          | 0/116 [00:02<?, ?it/s]
+Traceback (most recent call last):
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/train.py", line 35, in <module>
+    train()
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/train.py", line 30, in train
+    global_model, global_results = global_client.train(communication_rounds=communication_rounds, epochs=epochs)
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/clients.py", line 299, in train
+    self.communication_round(epochs)
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/clients.py", line 353, in communication_round
+    model_updates = [client.train_one_round(epochs) for client in self.clients]
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/clients.py", line 353, in <listcomp>
+    model_updates = [client.train_one_round(epochs) for client in self.clients]
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/clients.py", line 181, in train_one_round
+    self.train_epoch()
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/clients.py", line 220, in train_epoch
+    logits = self.model(data)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1130, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/pytorch_models.py", line 74, in forward
+    x = self.encoder(x)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1130, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/container.py", line 139, in forward
+    input = module(input)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1130, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/container.py", line 139, in forward
+    input = module(input)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1130, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torchvision/models/resnet.py", line 154, in forward
+    out = self.conv3(out)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1130, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/conv.py", line 457, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/conv.py", line 453, in _conv_forward
+    return F.conv2d(input, weight, bias, self.stride,
+RuntimeError: CUDA out of memory. Tried to allocate 114.00 MiB (GPU 0; 79.21 GiB total capacity; 952.68 MiB already allocated; 115.62 MiB free; 1.00 GiB reserved in total by PyTorch) If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation.  See documentation for Memory Management and PYTORCH_CUDA_ALLOC_CONF
+/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and will be removed in 0.15, please use 'weights' instead.
+  warnings.warn(
+/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and will be removed in 0.15. The current behavior is equivalent to passing `weights=None`.
+  warnings.warn(msg)
+Using device: cuda:0
+Pre-filtered 30767 patches based on country and season (split ignored)
+Loading BEN data for train...
+    237871 patches indexed
+    14805 filtered patches indexed
+    14805 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 30767 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    8209 filtered patches indexed
+    8209 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 15549 patches based on country and season (split ignored)
+Loading BEN data for train...
+    237871 patches indexed
+    7150 filtered patches indexed
+    7150 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 15549 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    4263 filtered patches indexed
+    4263 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 13683 patches based on country and season (split ignored)
+Loading BEN data for train...
+    237871 patches indexed
+    7180 filtered patches indexed
+    7180 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 13683 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    3248 filtered patches indexed
+    3248 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 59999 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    15720 filtered patches indexed
+    15720 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Round 1/40
+----------
+Epoch 1/1
+----------
+training:   0%|          | 0/58 [00:00<?, ?it/s]training:   0%|          | 0/58 [00:02<?, ?it/s]
+Traceback (most recent call last):
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/train.py", line 35, in <module>
+    train()
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/train.py", line 30, in train
+    global_model, global_results = global_client.train(communication_rounds=communication_rounds, epochs=epochs)
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/clients.py", line 299, in train
+    self.communication_round(epochs)
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/clients.py", line 353, in communication_round
+    model_updates = [client.train_one_round(epochs) for client in self.clients]
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/clients.py", line 353, in <listcomp>
+    model_updates = [client.train_one_round(epochs) for client in self.clients]
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/clients.py", line 181, in train_one_round
+    self.train_epoch()
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/clients.py", line 220, in train_epoch
+    logits = self.model(data)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1130, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/home/baris/cvrs_ws25/CV4RS-main/CV4RS-main/utils/pytorch_models.py", line 74, in forward
+    x = self.encoder(x)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1130, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/container.py", line 139, in forward
+    input = module(input)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1130, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/modules/pooling.py", line 162, in forward
+    return F.max_pool2d(input, self.kernel_size, self.stride,
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/_jit_internal.py", line 423, in fn
+    return if_false(*args, **kwargs)
+  File "/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torch/nn/functional.py", line 782, in _max_pool2d
+    return torch.max_pool2d(input, kernel_size, stride, padding, dilation, ceil_mode)
+RuntimeError: CUDA out of memory. Tried to allocate 58.00 MiB (GPU 0; 79.21 GiB total capacity; 1.03 GiB already allocated; 57.62 MiB free; 1.06 GiB reserved in total by PyTorch) If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation.  See documentation for Memory Management and PYTORCH_CUDA_ALLOC_CONF
+/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and will be removed in 0.15, please use 'weights' instead.
+  warnings.warn(
+/data/mamba_envs/baris/FL_review/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and will be removed in 0.15. The current behavior is equivalent to passing `weights=None`.
+  warnings.warn(msg)
+Using device: cuda:0
+Pre-filtered 30767 patches based on country and season (split ignored)
+Loading BEN data for train...
+    237871 patches indexed
+    14805 filtered patches indexed
+    14805 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 30767 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    8209 filtered patches indexed
+    8209 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 15549 patches based on country and season (split ignored)
+Loading BEN data for train...
+    237871 patches indexed
+    7150 filtered patches indexed
+    7150 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 15549 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    4263 filtered patches indexed
+    4263 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 13683 patches based on country and season (split ignored)
+Loading BEN data for train...
+    237871 patches indexed
+    7180 filtered patches indexed
+    7180 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 13683 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    3248 filtered patches indexed
+    3248 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Pre-filtered 59999 patches based on country and season (split ignored)
+Loading BEN data for test...
+    119825 patches indexed
+    15720 filtered patches indexed
+    15720 patches indexed considering max_len
+Merged metadata with snow/cloud metadata
+Loaded 549488 labels
+Loaded 549488 keys
+Loaded mapping created
+Round 1/40
+----------
+Epoch 1/1
+----------
+training:   0%|          | 0/58 [00:00<?, ?it/s]training:   2%|▏         | 1/58 [00:02<02:12,  2.33s/it]training:   3%|▎         | 2/58 [00:02<00:57,  1.02s/it]training:   5%|▌         | 3/58 [00:02<00:33,  1.65it/s]training:   7%|▋         | 4/58 [00:02<00:21,  2.46it/s]training:   9%|▊         | 5/58 [00:02<00:15,  3.37it/s]training:  10%|█         | 6/58 [00:02<00:12,  4.30it/s]training:  12%|█▏        | 7/58 [00:02<00:09,  5.21it/s]training:  14%|█▍        | 8/58 [00:03<00:08,  6.07it/s]training:  16%|█▌        | 9/58 [00:03<00:07,  6.83it/s]training:  17%|█▋        | 10/58 [00:03<00:07,  6.83it/s]training:  19%|█▉        | 11/58 [00:03<00:06,  7.36it/s]training:  21%|██        | 12/58 [00:03<00:05,  7.88it/s]training:  22%|██▏       | 13/58 [00:03<00:05,  8.38it/s]training:  24%|██▍       | 14/58 [00:03<00:05,  7.53it/s]training:  26%|██▌       | 15/58 [00:03<00:05,  7.91it/s]training:  28%|██▊       | 16/58 [00:04<00:05,  7.76it/s]training:  29%|██▉       | 17/58 [00:04<00:05,  7.96it/s]training:  31%|███       | 18/58 [00:04<00:05,  7.78it/s]training:  33%|███▎      | 19/58 [00:04<00:04,  8.07it/s]training:  34%|███▍      | 20/58 [00:04<00:04,  8.56it/s]training:  36%|███▌      | 21/58 [00:04<00:04,  8.89it/s]training:  38%|███▊      | 22/58 [00:04<00:04,  8.23it/s]training:  40%|███▉      | 23/58 [00:04<00:04,  8.53it/s]training:  41%|████▏     | 24/58 [00:05<00:04,  8.13it/s]training:  43%|████▎     | 25/58 [00:05<00:03,  8.41it/s]training:  45%|████▍     | 26/58 [00:05<00:03,  8.03it/s]training:  47%|████▋     | 27/58 [00:05<00:03,  8.34it/s]training:  48%|████▊     | 28/58 [00:05<00:03,  7.97it/s]training:  50%|█████     | 29/58 [00:05<00:03,  8.29it/s]training:  52%|█████▏    | 30/58 [00:05<00:03,  8.06it/s]training:  53%|█████▎    | 31/58 [00:05<00:03,  8.52it/s]training:  55%|█████▌    | 32/58 [00:05<00:03,  8.09it/s]training:  57%|█████▋    | 33/58 [00:06<00:02,  8.46it/s]training:  59%|█████▊    | 34/58 [00:06<00:03,  7.99it/s]training:  60%|██████    | 35/58 [00:06<00:02,  8.47it/s]training:  62%|██████▏   | 36/58 [00:06<00:02,  8.12it/s]training:  64%|██████▍   | 37/58 [00:06<00:02,  8.54it/s]training:  66%|██████▌   | 38/58 [00:06<00:02,  8.02it/s]training:  67%|██████▋   | 39/58 [00:06<00:02,  8.35it/s]training:  69%|██████▉   | 40/58 [00:06<00:02,  7.84it/s]training:  71%|███████   | 41/58 [00:07<00:02,  8.20it/s]training:  72%|███████▏  | 42/58 [00:07<00:01,  8.22it/s]training:  74%|███████▍  | 43/58 [00:07<00:01,  8.50it/s]training:  76%|███████▌  | 44/58 [00:07<00:01,  8.00it/s]training:  78%|███████▊  | 45/58 [00:07<00:01,  8.34it/s]training:  79%|███████▉  | 46/58 [00:07<00:01,  7.99it/s]training:  81%|████████  | 47/58 [00:07<00:01,  8.47it/s]training:  83%|████████▎ | 48/58 [00:07<00:01,  7.87it/s]training:  84%|████████▍ | 49/58 [00:08<00:01,  8.37it/s]training:  86%|████████▌ | 50/58 [00:08<00:01,  7.65it/s]training:  88%|████████▊ | 51/58 [00:08<00:00,  8.07it/s]training:  90%|████████▉ | 52/58 [00:08<00:00,  7.77it/s]training:  91%|█████████▏| 53/58 [00:08<00:00,  8.29it/s]training:  93%|█████████▎| 54/58 [00:08<00:00,  7.87it/s]training:  95%|█████████▍| 55/58 [00:08<00:00,  8.19it/s]training:  97%|█████████▋| 56/58 [00:08<00:00,  8.02it/s]training:  98%|█████████▊| 57/58 [00:09<00:00,  8.49it/s]training: 100%|██████████| 58/58 [00:09<00:00,  6.26it/s]
+Epoch 1/1
+----------
+training:   0%|          | 0/28 [00:00<?, ?it/s]training:   4%|▎         | 1/28 [00:00<00:15,  1.78it/s]
