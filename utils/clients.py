@@ -2,6 +2,7 @@ import copy
 
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import time
@@ -51,9 +52,6 @@ class PreFilter:
             countries: A country or list of countries to include. If None, all countries are included.
             seasons: A season or list of seasons to include. If None, all seasons are included.
         """
-        # add season info to metadata
-        # months 12, 1, 2 are winter, 3, 4, 5 are spring, 6, 7, 8 are summer, 9, 10, 11 are autumn
-        # get month based on patch_id (patch_id 15:17)
         metadata["month"] = metadata["patch_id"].str[15:17].astype(int)
         metadata["season"] = pd.cut(
             metadata["month"],
@@ -61,28 +59,21 @@ class PreFilter:
             labels=["Winter", "Spring", "Summer", "Autumn"],
             right=False,
         )
-        # manually set all entries with month 12 to winter
         metadata.loc[metadata["month"] == 12, "season"] = "Winter"
 
         seasons = None if seasons is None else seasons if isinstance(seasons, Container) else [seasons]
         countries = None if countries is None else countries if isinstance(countries, Container) else [countries]
 
         def filter_fn(metadata_row) -> bool:
-            # Order: 'patch_id', 'labels', 'split', 'country', 's1_name', 's2v1_name',
-            #        'contains_seasonal_snow', 'contains_cloud_or_shadow', 'month',
-            #        'season'
             row_country = metadata_row[3]
             row_season = metadata_row[9]
-            # check if patch season is correct
             if seasons is not None and row_season not in seasons:
                 return False
-            # check if patch country is correct
             if countries is not None and row_country not in countries:
                 return False
             return True
 
         self.filter_fn = filter_fn
-        from tqdm import tqdm
         self.filtered_patches = set([x[0] for x in [x for x in metadata.values if filter_fn(x)]])
         print(f"Pre-filtered {len(self.filtered_patches)} patches based on country and season (split ignored)")
 
@@ -105,7 +96,6 @@ class Aggregator:
 
         agg = {}
         for k in keys:
-            # weighted sum
             s = None
             for upd, sz in updates_and_sizes:
                 w = sz / total
@@ -117,6 +107,23 @@ class Aggregator:
 
 def is_modulation_key(k: str) -> bool:
     return ".mod.gamma" in k or ".mod.beta" in k or ".mod." in k
+
+
+# --- NEW (FedBN): identify ALL BN params+buffers keys to keep local ---
+def get_bn_state_dict_keys(model: nn.Module) -> set[str]:
+    bn_keys: set[str] = set()
+    for module_name, module in model.named_modules():
+        if isinstance(module, nn.modules.batchnorm._BatchNorm):
+            # parameters
+            for pn, _ in module.named_parameters(recurse=False):
+                full = f"{module_name}.{pn}" if module_name else pn
+                bn_keys.add(full)
+            # buffers (running_mean/var, num_batches_tracked)
+            for bn, _ in module.named_buffers(recurse=False):
+                full = f"{module_name}.{bn}" if module_name else bn
+                bn_keys.add(full)
+    return bn_keys
+
 
 class FLCLient:
     def __init__(
@@ -143,14 +150,18 @@ class FLCLient:
         self.num_classes = num_classes
         self.dataset_filter = dataset_filter
         self.results = init_results(self.num_classes)
+        self.device = device
+
+        # --- NEW: store BN keys for this client's model (FedBN local BN) ---
+        self.bn_keys = get_bn_state_dict_keys(self.model)
+
         self.dataset = BENv2DataSet(
-        data_dirs=data_dirs,
-        # For Mars use these paths
-        split="train",
-        img_size=(10, 120, 120),
-        include_snowy=False,
-        include_cloudy=False,
-        patch_prefilter=PreFilter(pd.read_parquet(data_dirs["metadata_parquet"]), countries=[csv_path], seasons=["Summer"]),
+            data_dirs=data_dirs,
+            split="train",
+            img_size=(10, 120, 120),
+            include_snowy=False,
+            include_cloudy=False,
+            patch_prefilter=PreFilter(pd.read_parquet(data_dirs["metadata_parquet"]), countries=[csv_path], seasons=["Summer"]),
         )
         self.train_loader = DataLoader(
             self.dataset,
@@ -161,15 +172,14 @@ class FLCLient:
             generator=torch.Generator().manual_seed(42),
             pin_memory=True,
         )
-        self.device = device
 
         self.validation_set = BENv2DataSet(
-        data_dirs=data_dirs,
-        split="test",
-        img_size=(10, 120, 120),
-        include_snowy=False,
-        include_cloudy=False,
-        patch_prefilter=PreFilter(pd.read_parquet(data_dirs["metadata_parquet"]), countries=[csv_path], seasons="Summer"),
+            data_dirs=data_dirs,
+            split="test",
+            img_size=(10, 120, 120),
+            include_snowy=False,
+            include_cloudy=False,
+            patch_prefilter=PreFilter(pd.read_parquet(data_dirs["metadata_parquet"]), countries=[csv_path], seasons="Summer"),
         )
         self.val_loader = DataLoader(
             self.validation_set,
@@ -186,7 +196,10 @@ class FLCLient:
         global_sd = model.state_dict()
 
         for k in global_sd.keys():
+            # --- NEW: keep BOTH modulation and BN local ---
             if is_modulation_key(k):
+                continue
+            if k in self.bn_keys:
                 continue
             local_sd[k] = global_sd[k].detach().clone()
 
@@ -201,7 +214,6 @@ class FLCLient:
         for epoch in range(1, epochs + 1):
             print("Epoch {}/{}".format(epoch, epochs))
             print("-" * 10)
-
             self.train_epoch()
         
         if validate:
@@ -212,8 +224,12 @@ class FLCLient:
 
         model_update = {}
         for key, value_before in state_before.items():
+            # --- NEW: do NOT send modulation OR BN updates ---
             if is_modulation_key(key):
-                 continue  # <<< DO NOT SEND modulation updates
+                continue
+            if key in self.bn_keys:
+                continue
+
             value_after = state_after[key]
             diff = value_after.type(torch.DoubleTensor) - value_before.type(torch.DoubleTensor)
             model_update[key] = diff
@@ -243,9 +259,7 @@ class FLCLient:
             loss.backward()
             self.optimizer.step()
 
-    # --------------------------
-    # NEW: per-client evaluation (BN shared, mod local)
-    # --------------------------
+    # per-client evaluation (uses local BN + local mod automatically)
     def validation_personalized(self):
         self.model.eval()
         y_true = []
@@ -275,6 +289,7 @@ class FLCLient:
     def get_validation_results(self):
         return self.results
 
+
 class GlobalClient:
     def __init__(
         self,
@@ -302,12 +317,12 @@ class GlobalClient:
             for csv_path in csv_paths
         ]
         self.validation_set = BENv2DataSet(
-        data_dirs=data_dirs,
-        split="test",
-        img_size=(10, 120, 120),
-        include_snowy=False,
-        include_cloudy=False,
-        patch_prefilter=PreFilter(pd.read_parquet(data_dirs["metadata_parquet"]), countries=["Finland","Ireland","Serbia","Austria", "Belgium", "Lithuania", "Portugal", "Switzerland"], seasons="Summer"),
+            data_dirs=data_dirs,
+            split="test",
+            img_size=(10, 120, 120),
+            include_snowy=False,
+            include_cloudy=False,
+            patch_prefilter=PreFilter(pd.read_parquet(data_dirs["metadata_parquet"]), countries=["Finland","Ireland","Serbia","Austria", "Belgium", "Lithuania", "Portugal", "Switzerland"], seasons="Summer"),
         )
         self.val_loader = DataLoader(
             self.validation_set,
@@ -350,11 +365,11 @@ class GlobalClient:
 
             self.communication_round(epochs)
 
-            # broadcast shared params (BN shared) while keeping modulation local
+            # broadcast shared params while keeping BN+mod local
             for client in self.clients:
                 client.set_model(self.model)
 
-            # ---- per-client eval (mod local) ----
+            # per-client eval (local BN + local mod)
             client_reports = []
             client_sizes = []
             for client in self.clients:
@@ -380,20 +395,11 @@ class GlobalClient:
 
         self.train_time = time.perf_counter() - start
 
-        # IMPORTANT: no checkpoints (as you requested earlier)
+        # no checkpoint saving
         # self.save_results()
         # self.save_state_dict()
 
-        # return compatible with your main: (global_model, global_results)
         return self.model, last_out
-
-    def change_sizes(self, labels):
-        new_labels=np.zeros((len(labels[0]),19))
-        for i in range(len(labels[0])): #128
-            for j in range(len(labels)): #19
-                new_labels[i,j] =  int(labels[j][i])
-        return new_labels
-    
 
     def validation_round(self):
         self.model.eval()
