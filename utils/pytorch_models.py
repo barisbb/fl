@@ -1,8 +1,3 @@
-# =========================
-# Plain ResNet50 (no modulation wrappers)
-# Use this for plain FedBN
-# =========================
-
 import torch
 import torch.nn as nn
 import torch.nn.init as init
@@ -20,19 +15,109 @@ def fc_init_weights(m):
         init.kaiming_normal_(m.weight.data)
 
 
+class Modulation(nn.Module):
+    """
+    Feature-wise affine modulation: y = gamma * x + beta
+    gamma,beta are 1xC (broadcast over H,W).
+    """
+    def __init__(self, channels: int):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(1, channels, 1, 1))
+        self.beta  = nn.Parameter(torch.zeros(1, channels, 1, 1))
+
+    def forward(self, x):
+        return x * self.gamma + self.beta
+
+
+class BottleneckWithMod(nn.Module):
+    """
+    Wraps a torchvision Bottleneck block and applies modulation after bn2 (before relu).
+    """
+    def __init__(self, bottleneck_block: nn.Module, mod_channels: int, mod_name: str):
+        super().__init__()
+        self.block = bottleneck_block
+        self.mod = Modulation(mod_channels)
+        self.mod_name = mod_name  # just for naming/debug
+
+    def forward(self, x):
+        identity = x
+
+        out = self.block.conv1(x)
+        out = self.block.bn1(out)
+        out = self.block.relu(out)
+
+        out = self.block.conv2(out)
+        out = self.block.bn2(out)
+
+        # <<< client-specific modulation here >>>
+        out = self.mod(out)
+
+        out = self.block.relu(out)
+        out = self.block.conv3(out)
+        out = self.block.bn3(out)
+
+        if self.block.downsample is not None:
+            identity = self.block.downsample(x)
+
+        out += identity
+        out = self.block.relu(out)
+        return out
+
+
+class BottleneckWith3Mods(nn.Module):
+    """
+    Wrap torchvision Bottleneck and add 3 client-local modulations:
+    after bn1, after bn2, after bn3.
+    """
+    def __init__(self, bottleneck_block: nn.Module):
+        super().__init__()
+        self.block = bottleneck_block
+
+        c1 = self.block.bn1.num_features
+        c2 = self.block.bn2.num_features
+        c3 = self.block.bn3.num_features
+
+        self.mod1 = Modulation(c1)
+        self.mod2 = Modulation(c2)
+        self.mod3 = Modulation(c3)
+
+    def forward(self, x):
+        identity = x
+
+        out = self.block.conv1(x)
+        out = self.block.bn1(out)
+        out = self.mod1(out)          # <-- added
+        out = self.block.relu(out)
+
+        out = self.block.conv2(out)
+        out = self.block.bn2(out)
+        out = self.mod2(out)          # <-- added
+        out = self.block.relu(out)
+
+        out = self.block.conv3(out)
+        out = self.block.bn3(out)
+        out = self.mod3(out)          # <-- added
+
+        if self.block.downsample is not None:
+            identity = self.block.downsample(x)
+
+        out = out + identity
+        out = self.block.relu(out)
+        return out
+
+
 class ResNet50(nn.Module):
     def __init__(self, name, num_cls=19, channels=10, FC_dim=2048, pretrained=True):
         super(ResNet50, self).__init__()
         self.name = name
         self.len = 0
         self.loss = 0
-
         resnet = models.resnet50(pretrained=pretrained)
 
-        # Replace first conv to accept 10 channels
-        self.conv1 = nn.Conv2d(channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        resnet.layer2[0] = BottleneckWith3Mods(resnet.layer2[0])
+        resnet.layer3[0] = BottleneckWith3Mods(resnet.layer3[0])
 
-        # Keep the rest as vanilla ResNet50 (with BN layers intact)
+        self.conv1 = nn.Conv2d(channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         self.encoder = nn.Sequential(
             self.conv1,
             resnet.bn1,
@@ -44,9 +129,7 @@ class ResNet50(nn.Module):
             resnet.layer4,
             resnet.avgpool
         )
-
         self.FC = nn.Linear(FC_dim, num_cls)
-
         self.apply(weights_init_kaiming)
         self.apply(fc_init_weights)
 
