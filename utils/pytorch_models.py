@@ -30,14 +30,11 @@ class Modulation(nn.Module):
 
 
 class BottleneckWithMod(nn.Module):
-    """
-    Wraps a torchvision Bottleneck block and applies modulation after bn2 (before relu).
-    """
     def __init__(self, bottleneck_block: nn.Module, mod_channels: int, mod_name: str):
         super().__init__()
         self.block = bottleneck_block
         self.mod = Modulation(mod_channels)
-        self.mod_name = mod_name  # just for naming/debug
+        self.mod_name = mod_name
 
     def forward(self, x):
         identity = x
@@ -49,7 +46,6 @@ class BottleneckWithMod(nn.Module):
         out = self.block.conv2(out)
         out = self.block.bn2(out)
 
-        # <<< client-specific modulation here >>>
         out = self.mod(out)
 
         out = self.block.relu(out)
@@ -65,10 +61,6 @@ class BottleneckWithMod(nn.Module):
 
 
 class BottleneckWith3Mods(nn.Module):
-    """
-    Wrap torchvision Bottleneck and add 3 client-local modulations:
-    after bn1, after bn2, after bn3.
-    """
     def __init__(self, bottleneck_block: nn.Module):
         super().__init__()
         self.block = bottleneck_block
@@ -86,17 +78,17 @@ class BottleneckWith3Mods(nn.Module):
 
         out = self.block.conv1(x)
         out = self.block.bn1(out)
-        out = self.mod1(out)          # <-- added
+        out = self.mod1(out)
         out = self.block.relu(out)
 
         out = self.block.conv2(out)
         out = self.block.bn2(out)
-        out = self.mod2(out)          # <-- added
+        out = self.mod2(out)
         out = self.block.relu(out)
 
         out = self.block.conv3(out)
         out = self.block.bn3(out)
-        out = self.mod3(out)          # <-- added
+        out = self.mod3(out)
 
         if self.block.downsample is not None:
             identity = self.block.downsample(x)
