@@ -29,38 +29,15 @@ class Modulation(nn.Module):
         return x * self.gamma + self.beta
 
 
-class BottleneckWithMod(nn.Module):
-    def __init__(self, bottleneck_block: nn.Module, mod_channels: int, mod_name: str):
-        super().__init__()
-        self.block = bottleneck_block
-        self.mod = Modulation(mod_channels)
-        self.mod_name = mod_name
-
-    def forward(self, x):
-        identity = x
-
-        out = self.block.conv1(x)
-        out = self.block.bn1(out)
-        out = self.block.relu(out)
-
-        out = self.block.conv2(out)
-        out = self.block.bn2(out)
-
-        out = self.mod(out)
-
-        out = self.block.relu(out)
-        out = self.block.conv3(out)
-        out = self.block.bn3(out)
-
-        if self.block.downsample is not None:
-            identity = self.block.downsample(x)
-
-        out += identity
-        out = self.block.relu(out)
-        return out
-
-
 class BottleneckWith3Mods(nn.Module):
+    """
+    Same 3 mods, but moved BEFORE BN (more stable with FedBN).
+    Order becomes:
+      conv1 -> mod1 -> bn1 -> relu
+      conv2 -> mod2 -> bn2 -> relu
+      conv3 -> mod3 -> bn3
+      + residual -> relu
+    """
     def __init__(self, bottleneck_block: nn.Module):
         super().__init__()
         self.block = bottleneck_block
@@ -77,18 +54,18 @@ class BottleneckWith3Mods(nn.Module):
         identity = x
 
         out = self.block.conv1(x)
+        out = self.mod1(out)          # <<< moved here (before bn1)
         out = self.block.bn1(out)
-        out = self.mod1(out)
         out = self.block.relu(out)
 
         out = self.block.conv2(out)
+        out = self.mod2(out)          # <<< moved here (before bn2)
         out = self.block.bn2(out)
-        out = self.mod2(out)
         out = self.block.relu(out)
 
         out = self.block.conv3(out)
+        out = self.mod3(out)          # <<< moved here (before bn3)
         out = self.block.bn3(out)
-        out = self.mod3(out)
 
         if self.block.downsample is not None:
             identity = self.block.downsample(x)
@@ -106,6 +83,7 @@ class ResNet50(nn.Module):
         self.loss = 0
         resnet = models.resnet50(pretrained=pretrained)
 
+        # keep your same replacements
         resnet.layer2[0] = BottleneckWith3Mods(resnet.layer2[0])
         resnet.layer3[0] = BottleneckWith3Mods(resnet.layer3[0])
 
