@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import time
 from datetime import datetime
-from pathlib import Path 
+from pathlib import Path
 
 from functools import partial
 from pathlib import Path
@@ -37,21 +37,13 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 data_dirs = {
-       "images_lmdb": "/data_read_only/BigEarthNet/BigEarthNet-V2/BENv2.lmdb",
-         "metadata_parquet": "/data_read_only/BigEarthNet/BigEarthNet-V2/metadata.parquet",
-         "metadata_snow_cloud_parquet": "/data_read_only/BigEarthNet/BigEarthNet-V2/metadata_for_patches_with_snow_cloud_or_shadow.parquet",
-    }
+    "images_lmdb": "/data_read_only/BigEarthNet/BigEarthNet-V2/BENv2.lmdb",
+    "metadata_parquet": "/data_read_only/BigEarthNet/BigEarthNet-V2/metadata.parquet",
+    "metadata_snow_cloud_parquet": "/data_read_only/BigEarthNet/BigEarthNet-V2/metadata_for_patches_with_snow_cloud_or_shadow.parquet",
+}
 
 class PreFilter:
     def __init__(self, metadata: pd.DataFrame, countries: Optional[Container] | str = None, seasons: Optional[Container] | str = None):
-        """
-        Creates a function that filters patches based on country and season.
-
-        Args:
-            metadata: The metadata DataFrame.
-            countries: A country or list of countries to include. If None, all countries are included.
-            seasons: A season or list of seasons to include. If None, all seasons are included.
-        """
         metadata["month"] = metadata["patch_id"].str[15:17].astype(int)
         metadata["season"] = pd.cut(
             metadata["month"],
@@ -84,45 +76,75 @@ class PreFilter:
         return patch_id in self.filtered_patches
 
 
-class Aggregator:
-    def __init__(self) -> None:
-        pass
-
-    def fed_avg_weighted(self, updates_and_sizes: list[tuple[dict, int]]):
-        assert len(updates_and_sizes) > 0, "Trying to aggregate empty update list"
-
-        total = sum(sz for _, sz in updates_and_sizes)
-        keys = updates_and_sizes[0][0].keys()
-
-        agg = {}
-        for k in keys:
-            s = None
-            for upd, sz in updates_and_sizes:
-                w = sz / total
-                term = upd[k] * w
-                s = term if s is None else (s + term)
-            agg[k] = s
-        return agg
-
-
+# IMPORTANT FIX: matches .mod1/.mod2/.mod3 as well
 def is_modulation_key(k: str) -> bool:
-    return ".mod.gamma" in k or ".mod.beta" in k or ".mod." in k
+    return ".mod" in k
 
 
-# --- NEW (FedBN): identify ALL BN params+buffers keys to keep local ---
+# FedBN helper: BN params+buffers keys kept local
 def get_bn_state_dict_keys(model: nn.Module) -> set[str]:
     bn_keys: set[str] = set()
     for module_name, module in model.named_modules():
         if isinstance(module, nn.modules.batchnorm._BatchNorm):
-            # parameters
             for pn, _ in module.named_parameters(recurse=False):
                 full = f"{module_name}.{pn}" if module_name else pn
                 bn_keys.add(full)
-            # buffers (running_mean/var, num_batches_tracked)
             for bn, _ in module.named_buffers(recurse=False):
                 full = f"{module_name}.{bn}" if module_name else bn
                 bn_keys.add(full)
     return bn_keys
+
+
+class Aggregator:
+    def __init__(
+        self,
+        eps: float = 1e-12,
+        align_power: float = 2.0,
+        clip_align_min: float = 0.0,
+    ) -> None:
+        # Option A parameters
+        self.eps = eps
+        self.align_power = align_power
+        self.clip_align_min = clip_align_min
+
+    def compute_option_a_weights(self, updates_sizes_dirs: list[tuple[dict, int, torch.Tensor]]):
+        """
+        updates_sizes_dirs: list of (update_dict, size, mod_unit_dir)
+        weight_i ∝ (size_i/total) * (max(0, cos(dir_i, ref)) + eps)^align_power
+        Returns: weights(list), cosines(list)
+        """
+        eps = self.eps
+        total = sum(sz for _, sz, _ in updates_sizes_dirs)
+
+        # reference direction
+        ref = None
+        for _, _, u in updates_sizes_dirs:
+            ref = u if ref is None else (ref + u)
+        ref = ref / (ref.norm() + eps)
+
+        raw_w = []
+        cosines = []
+        for _, sz, u in updates_sizes_dirs:
+            a = float(torch.dot(u, ref).item())
+            a = max(self.clip_align_min, a)
+            cosines.append(a)
+            gate = (a + eps) ** self.align_power
+            raw_w.append((sz / total) * gate)
+
+        s = sum(raw_w) + eps
+        weights = [w / s for w in raw_w]
+        return weights, cosines
+
+    def aggregate_with_weights(self, updates_sizes_dirs: list[tuple[dict, int, torch.Tensor]], weights: list[float]):
+        keys = updates_sizes_dirs[0][0].keys()
+        agg = {}
+        for k in keys:
+            s_k = None
+            for (upd, _, _), w in zip(updates_sizes_dirs, weights):
+                term = upd[k] * w
+                s_k = term if s_k is None else (s_k + term)
+            agg[k] = s_k
+        return agg
 
 
 class FLCLient:
@@ -152,7 +174,7 @@ class FLCLient:
         self.results = init_results(self.num_classes)
         self.device = device
 
-        # --- NEW: store BN keys for this client's model (FedBN local BN) ---
+        # FedBN local BN keys
         self.bn_keys = get_bn_state_dict_keys(self.model)
 
         self.dataset = BENv2DataSet(
@@ -196,17 +218,45 @@ class FLCLient:
         global_sd = model.state_dict()
 
         for k in global_sd.keys():
-            # --- NEW: keep BOTH modulation and BN local ---
+            # keep modulation local
             if is_modulation_key(k):
                 continue
+            # keep BN local (FedBN)
             if k in self.bn_keys:
                 continue
             local_sd[k] = global_sd[k].detach().clone()
 
         self.model.load_state_dict(local_sd, strict=True)
 
+    # -------- Option A support: MOD UPDATE direction (FIXED) --------
+    def _get_mod_vector(self) -> torch.Tensor:
+        vec = []
+        with torch.no_grad():
+            for name, p in self.model.named_parameters():
+                if is_modulation_key(name) and (name.endswith("gamma") or name.endswith("beta")):
+                    vec.append(p.detach().float().view(-1).cpu())
+        if vec:
+            return torch.cat(vec)
+        return torch.zeros(1)
+
+    def _unit_dir_from_delta(self, d: torch.Tensor) -> torch.Tensor:
+        n = d.norm()
+        if float(n.item()) < 1e-12:
+            # fallback: use current mod vector direction (gamma starts at 1, so non-zero)
+            v = d  # placeholder
+            v = self._get_mod_vector()
+            vn = v.norm()
+            if float(vn.item()) < 1e-12:
+                return torch.ones(1)  # last-resort non-zero vector
+            return v / (vn + 1e-12)
+        return d / (n + 1e-12)
+    # ---------------------------------------------------------------
+
     def train_one_round(self, epochs: int, validate: bool = False):
         state_before = copy.deepcopy(self.model.state_dict())
+
+        # capture mod BEFORE (for delta)
+        mod_before = self._get_mod_vector()
 
         self.optimizer = self.optimizer_constructor(self.model.parameters(), **self.optimizer_kwargs)
         self.criterion = self.criterion_constructor(**self.criterion_kwargs)
@@ -215,18 +265,24 @@ class FLCLient:
             print("Epoch {}/{}".format(epoch, epochs))
             print("-" * 10)
             self.train_epoch()
-        
+
         if validate:
             report = self.validation_round()
             self.results = update_results(self.results, report, self.num_classes)
+
+        # capture mod AFTER (for delta)
+        mod_after = self._get_mod_vector()
+        dmod = (mod_after - mod_before)
+        mod_unit_dir = self._unit_dir_from_delta(dmod)
 
         state_after = self.model.state_dict()
 
         model_update = {}
         for key, value_before in state_before.items():
-            # --- NEW: do NOT send modulation OR BN updates ---
+            # do not send modulation updates
             if is_modulation_key(key):
                 continue
+            # do not send BN updates (FedBN)
             if key in self.bn_keys:
                 continue
 
@@ -234,23 +290,17 @@ class FLCLient:
             diff = value_after.type(torch.DoubleTensor) - value_before.type(torch.DoubleTensor)
             model_update[key] = diff
 
-        return model_update, len(self.dataset)
+        # Option A: include mod delta direction for aggregation weighting
+        return model_update, len(self.dataset), mod_unit_dir
 
-    def change_sizes(self, labels):
-        new_labels=np.zeros((len(labels[0]),19))
-        for i in range(len(labels[0])): #128
-            for j in range(len(labels)): #19
-                new_labels[i,j] =  int(labels[j][i])
-        return new_labels
-    
     def train_epoch(self):
         self.model.train()
         for idx, batch in enumerate(tqdm(self.train_loader, desc="training")):
             data = batch[1]
             labels = batch[4]
-            
+
             data = data.cuda()
-            label_new=np.copy(labels)
+            label_new = np.copy(labels)
             label_new = torch.from_numpy(label_new).cuda()
             self.optimizer.zero_grad()
 
@@ -259,7 +309,6 @@ class FLCLient:
             loss.backward()
             self.optimizer.step()
 
-    # per-client evaluation (uses local BN + local mod automatically)
     def validation_personalized(self):
         self.model.eval()
         y_true = []
@@ -285,7 +334,7 @@ class FLCLient:
             y_true, y_predicted, predicted_probs, self.dataset_filter
         )
         return report
-    
+
     def get_validation_results(self):
         return self.results
 
@@ -302,7 +351,8 @@ class GlobalClient:
         num_classes: int = 19,
         dataset_filter: str = "serbia",
         state_dict_path: str = None,
-        results_path: str = None
+        results_path: str = None,
+        align_power: float = 2.0,   # Option A knob (1..3 typical)
     ) -> None:
         self.model = model
         self.device = torch.device(0) if torch.cuda.is_available() else torch.device('cpu')
@@ -310,12 +360,15 @@ class GlobalClient:
         self.model.to(self.device)
         self.num_classes = num_classes
         self.dataset_filter = dataset_filter
-        self.aggregator = Aggregator()
+
+        self.aggregator = Aggregator(eps=1e-12, align_power=align_power, clip_align_min=0.0)
         self.results = init_results(self.num_classes)
+
         self.clients = [
             FLCLient(copy.deepcopy(self.model), lmdb_path, val_path, csv_path, num_classes=num_classes, dataset_filter=csv_path, device=self.device)
             for csv_path in csv_paths
         ]
+
         self.validation_set = BENv2DataSet(
             data_dirs=data_dirs,
             split="test",
@@ -333,7 +386,7 @@ class GlobalClient:
             generator=torch.Generator().manual_seed(42),
             pin_memory=True,
         )
-        
+
         dt = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         if state_dict_path is None:
             if isinstance(model, ConvMixer):
@@ -401,35 +454,21 @@ class GlobalClient:
 
         return self.model, last_out
 
-    def validation_round(self):
-        self.model.eval()
-        y_true = []
-        predicted_probs = []
-
-        with torch.no_grad():
-            for batch_idx, batch in enumerate(tqdm(self.val_loader, desc="test")):
-                data = batch[1].to(self.device)
-                labels = batch[4]
-                label_new=np.copy(labels)
-
-                logits = self.model(data)
-                probs = torch.sigmoid(logits).cpu().numpy()
-
-                predicted_probs += list(probs)
-                y_true += list(label_new)
-
-        predicted_probs = np.asarray(predicted_probs)
-        y_predicted = (predicted_probs >= 0.5).astype(np.float32)
-
-        y_true = np.asarray(y_true)
-        report = get_classification_report(
-            y_true, y_predicted, predicted_probs, self.dataset_filter
-        )
-        return report
-
     def communication_round(self, epochs: int):
-        updates_and_sizes = [client.train_one_round(epochs) for client in self.clients]
-        update_aggregation = self.aggregator.fed_avg_weighted(updates_and_sizes)
+        # collect (update, size, mod_delta_dir)
+        updates_sizes_dirs = [client.train_one_round(epochs) for client in self.clients]
+
+        # compute weights (Option A) + print them
+        weights, cosines = self.aggregator.compute_option_a_weights(updates_sizes_dirs)
+
+        print("\nAggregation weights (Option A: size × similarity of Δmod)")
+        for i, (client, w, cos_val, tup) in enumerate(zip(self.clients, weights, cosines, updates_sizes_dirs)):
+            _, sz, _ = tup
+            print(f"Client {i} ({client.dataset_filter}) | size={sz} | cos={cos_val:.4f} | weight={w:.4f}")
+        print(f"Sum of weights: {sum(weights):.4f}\n")
+
+        # aggregate shared updates
+        update_aggregation = self.aggregator.aggregate_with_weights(updates_sizes_dirs, weights)
 
         global_state_dict = self.model.state_dict()
         for key, update in update_aggregation.items():
@@ -443,6 +482,6 @@ class GlobalClient:
 
     def save_results(self):
         if not Path(self.results_path).parent.is_dir():
-            Path(self.results_path).parent.mkdir(parents=True)  
-        res = {'global':self.results, 'clients':self.client_results, 'train_time': self.train_time}
+            Path(self.results_path).parent.mkdir(parents=True)
+        res = {'global': self.results, 'clients': self.client_results, 'train_time': self.train_time}
         torch.save(res, self.results_path)
