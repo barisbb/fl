@@ -23,7 +23,7 @@ class Modulation(nn.Module):
     def __init__(self, channels: int):
         super().__init__()
         self.gamma = nn.Parameter(torch.ones(1, channels, 1, 1))
-        self.beta  = nn.Parameter(torch.zeros(1, channels, 1, 1))
+        self.beta = nn.Parameter(torch.zeros(1, channels, 1, 1))
 
     def forward(self, x):
         return x * self.gamma + self.beta
@@ -54,17 +54,17 @@ class BottleneckWith3Mods(nn.Module):
         identity = x
 
         out = self.block.conv1(x)
-        out = self.mod1(out)          # <<< moved here (before bn1)
+        out = self.mod1(out)
         out = self.block.bn1(out)
         out = self.block.relu(out)
 
         out = self.block.conv2(out)
-        out = self.mod2(out)          # <<< moved here (before bn2)
+        out = self.mod2(out)
         out = self.block.bn2(out)
         out = self.block.relu(out)
 
         out = self.block.conv3(out)
-        out = self.mod3(out)          # <<< moved here (before bn3)
+        out = self.mod3(out)
         out = self.block.bn3(out)
 
         if self.block.downsample is not None:
@@ -76,7 +76,7 @@ class BottleneckWith3Mods(nn.Module):
 
 
 class ResNet50(nn.Module):
-    def __init__(self, name, num_cls=19, channels=10, FC_dim=2048, pretrained=True):
+    def __init__(self, name, num_cls=10, channels=3, FC_dim=2048, pretrained=True):
         super(ResNet50, self).__init__()
         self.name = name
         self.len = 0
@@ -87,7 +87,9 @@ class ResNet50(nn.Module):
         resnet.layer2[0] = BottleneckWith3Mods(resnet.layer2[0])
         resnet.layer3[0] = BottleneckWith3Mods(resnet.layer3[0])
 
-        self.conv1 = nn.Conv2d(channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        self.conv1 = nn.Conv2d(
+            channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False
+        )
         self.encoder = nn.Sequential(
             self.conv1,
             resnet.bn1,
