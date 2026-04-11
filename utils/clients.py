@@ -1,6 +1,7 @@
 import copy
 import random
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -25,6 +26,8 @@ from utils.pytorch_utils import (
 
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
+
+
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
@@ -46,6 +49,59 @@ def get_bn_state_dict_keys(model: nn.Module) -> set[str]:
                 full = f"{module_name}.{bn}" if module_name else bn
                 bn_keys.add(full)
     return bn_keys
+
+
+def dirichlet_non_iid_split(
+    labels: np.ndarray,
+    num_clients: int,
+    num_classes: int,
+    alpha: float = 0.3,
+    min_size: int = 10,
+    seed: int = 42,
+) -> list[list[int]]:
+    """
+    Non-IID split using a Dirichlet distribution over class proportions.
+
+    Smaller alpha -> more skewed / more non-IID
+    Larger alpha  -> closer to IID
+    """
+    rng = np.random.default_rng(seed)
+    labels = np.asarray(labels)
+
+    while True:
+        client_indices = [[] for _ in range(num_clients)]
+
+        for class_id in range(num_classes):
+            class_idxs = np.where(labels == class_id)[0]
+            rng.shuffle(class_idxs)
+
+            if len(class_idxs) == 0:
+                continue
+
+            proportions = rng.dirichlet(np.repeat(alpha, num_clients))
+            split_points = (np.cumsum(proportions) * len(class_idxs)).astype(int)[:-1]
+            class_split = np.split(class_idxs, split_points)
+
+            for client_id, idxs in enumerate(class_split):
+                client_indices[client_id].extend(idxs.tolist())
+
+        sizes = [len(idxs) for idxs in client_indices]
+        if min(sizes) >= min_size:
+            break
+
+    for idxs in client_indices:
+        rng.shuffle(idxs)
+
+    return client_indices
+
+
+def print_client_distribution(client_name: str, subset_indices: list[int], targets: list[int], num_classes: int):
+    subset_targets = [targets[i] for i in subset_indices]
+    counts = Counter(subset_targets)
+    print(f"\n{client_name} class distribution:")
+    for c in range(num_classes):
+        print(f"  class {c}: {counts.get(c, 0)}")
+    print(f"  total: {len(subset_indices)}")
 
 
 class EuroSATOneHotDataset(Dataset):
@@ -236,7 +292,7 @@ class FLCLient:
 
     def train_epoch(self):
         self.model.train()
-        for data, labels in tqdm(self.train_loader, desc="training"):
+        for data, labels in tqdm(self.train_loader, desc=f"training-{self.dataset_filter}"):
             data = data.to(self.device, non_blocking=True)
             labels = labels.to(self.device, non_blocking=True)
 
@@ -289,6 +345,9 @@ class GlobalClient:
         state_dict_path: Optional[str] = None,
         results_path: Optional[str] = None,
         align_power: float = 2.0,
+        dirichlet_alpha: float = 0.3,
+        min_client_samples: int = 20,
+        seed: int = 42,
     ) -> None:
         self.model = model
         self.device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
@@ -312,16 +371,41 @@ class GlobalClient:
         )
 
         total_size = len(full_dataset)
-        indices = np.arange(total_size)
+        all_indices = np.arange(total_size)
 
-        rng = np.random.default_rng(42)
-        rng.shuffle(indices)
+        # EuroSAT labels
+        # For torchvision datasets like EuroSAT, labels are in .targets
+        all_targets = np.array(full_dataset.targets)
 
+        rng = np.random.default_rng(seed)
+
+        # Global train/test split first
+        rng.shuffle(all_indices)
         train_size = int(0.8 * total_size)
-        train_indices = indices[:train_size]
-        test_indices = indices[train_size:]
+        train_indices = all_indices[:train_size]
+        test_indices = all_indices[train_size:]
 
-        client_train_splits = np.array_split(train_indices, len(csv_paths))
+        train_targets = all_targets[train_indices]
+
+        # Non-IID split among clients on the TRAIN portion only
+        client_relative_splits = dirichlet_non_iid_split(
+            labels=train_targets,
+            num_clients=len(csv_paths),
+            num_classes=num_classes,
+            alpha=dirichlet_alpha,
+            min_size=min_client_samples,
+            seed=seed,
+        )
+
+        client_train_splits = [train_indices[np.array(rel_idxs)] for rel_idxs in client_relative_splits]
+
+        for i, csv_path in enumerate(csv_paths):
+            print_client_distribution(
+                client_name=csv_path,
+                subset_indices=client_train_splits[i].tolist(),
+                targets=full_dataset.targets,
+                num_classes=num_classes,
+            )
 
         self.clients = [
             FLCLient(
