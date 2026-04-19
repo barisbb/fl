@@ -13,83 +13,35 @@ def weights_init_kaiming(m):
 def fc_init_weights(m):
     if type(m) == nn.Linear:
         init.kaiming_normal_(m.weight.data)
-
-
-class Modulation(nn.Module):
-    """
-    Feature-wise affine modulation: y = gamma * x + beta
-    gamma,beta are 1xC (broadcast over H,W).
-    """
-    def __init__(self, channels: int):
-        super().__init__()
-        self.gamma = nn.Parameter(torch.ones(1, channels, 1, 1))
-        self.beta = nn.Parameter(torch.zeros(1, channels, 1, 1))
-
-    def forward(self, x):
-        return x * self.gamma + self.beta
-
-
-class BottleneckWith3Mods(nn.Module):
-    """
-    Same 3 mods, but moved BEFORE BN (more stable with FedBN).
-    Order becomes:
-      conv1 -> mod1 -> bn1 -> relu
-      conv2 -> mod2 -> bn2 -> relu
-      conv3 -> mod3 -> bn3
-      + residual -> relu
-    """
-    def __init__(self, bottleneck_block: nn.Module):
-        super().__init__()
-        self.block = bottleneck_block
-
-        c1 = self.block.bn1.num_features
-        c2 = self.block.bn2.num_features
-        c3 = self.block.bn3.num_features
-
-        self.mod1 = Modulation(c1)
-        self.mod2 = Modulation(c2)
-        self.mod3 = Modulation(c3)
-
-    def forward(self, x):
-        identity = x
-
-        out = self.block.conv1(x)
-        out = self.mod1(out)
-        out = self.block.bn1(out)
-        out = self.block.relu(out)
-
-        out = self.block.conv2(out)
-        out = self.mod2(out)
-        out = self.block.bn2(out)
-        out = self.block.relu(out)
-
-        out = self.block.conv3(out)
-        out = self.mod3(out)
-        out = self.block.bn3(out)
-
-        if self.block.downsample is not None:
-            identity = self.block.downsample(x)
-
-        out = out + identity
-        out = self.block.relu(out)
-        return out
+        if m.bias is not None:
+            init.zeros_(m.bias.data)
 
 
 class ResNet50(nn.Module):
+    """
+    Standard ResNet50 for FedBN.
+
+    FedBN behavior is implemented in the training code:
+    - BN parameters and BN running stats stay local to each client
+    - all non-BN parameters are aggregated globally
+    """
     def __init__(self, name, num_cls=10, channels=3, FC_dim=2048, pretrained=True):
         super(ResNet50, self).__init__()
         self.name = name
         self.len = 0
         self.loss = 0
+
+        # For newer torchvision versions, you may want:
+        # weights=models.ResNet50_Weights.DEFAULT if pretrained else None
         resnet = models.resnet50(pretrained=pretrained)
 
-        # keep your same replacements
-        resnet.layer2[0] = BottleneckWith3Mods(resnet.layer2[0])
-        resnet.layer3[0] = BottleneckWith3Mods(resnet.layer3[0])
+        if channels != 3:
+            self.conv1 = nn.Conv2d(
+                channels, 64, kernel_size=7, stride=2, padding=3, bias=False
+            )
+        else:
+            self.conv1 = resnet.conv1
 
-        self.conv1 = nn.Conv2d(
-            channels, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False
-        )
         self.encoder = nn.Sequential(
             self.conv1,
             resnet.bn1,
@@ -99,11 +51,15 @@ class ResNet50(nn.Module):
             resnet.layer2,
             resnet.layer3,
             resnet.layer4,
-            resnet.avgpool
+            resnet.avgpool,
         )
+
         self.FC = nn.Linear(FC_dim, num_cls)
-        self.apply(weights_init_kaiming)
-        self.apply(fc_init_weights)
+
+        if channels != 3:
+            weights_init_kaiming(self.conv1)
+
+        fc_init_weights(self.FC)
 
     def forward(self, x):
         x = self.encoder(x)
