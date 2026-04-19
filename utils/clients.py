@@ -34,10 +34,6 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
-def is_modulation_key(k: str) -> bool:
-    return ".mod" in k
-
-
 def get_bn_state_dict_keys(model: nn.Module) -> set[str]:
     bn_keys: set[str] = set()
     for module_name, module in model.named_modules():
@@ -119,54 +115,24 @@ class EuroSATOneHotDataset(Dataset):
         return image, one_hot
 
 
-class Aggregator:
-    def __init__(
-        self,
-        eps: float = 1e-12,
-        align_power: float = 2.0,
-        clip_align_min: float = 0.0,
-    ) -> None:
+class FedBNAggregator:
+    def __init__(self, eps: float = 1e-12) -> None:
         self.eps = eps
-        self.align_power = align_power
-        self.clip_align_min = clip_align_min
 
-    def compute_option_a_weights(self, updates_sizes_dirs: list[tuple[dict, int, torch.Tensor]]):
-        """
-        updates_sizes_dirs: list of (update_dict, size, mod_unit_dir)
-        weight_i ∝ (size_i/total) * (max(0, cos(dir_i, ref)) + eps)^align_power
-        Returns: weights(list), cosines(list)
-        """
-        eps = self.eps
-        total = sum(sz for _, sz, _ in updates_sizes_dirs)
+    def aggregate(self, updates_sizes: list[tuple[dict, int]]):
+        total = sum(sz for _, sz in updates_sizes)
+        weights = [sz / (total + self.eps) for _, sz in updates_sizes]
 
-        ref = None
-        for _, _, u in updates_sizes_dirs:
-            ref = u if ref is None else (ref + u)
-        ref = ref / (ref.norm() + eps)
-
-        raw_w = []
-        cosines = []
-        for _, sz, u in updates_sizes_dirs:
-            a = float(torch.dot(u, ref).item())
-            a = max(self.clip_align_min, a)
-            cosines.append(a)
-            gate = (a + eps) ** self.align_power
-            raw_w.append((sz / total) * gate)
-
-        s = sum(raw_w) + eps
-        weights = [w / s for w in raw_w]
-        return weights, cosines
-
-    def aggregate_with_weights(self, updates_sizes_dirs: list[tuple[dict, int, torch.Tensor]], weights: list[float]):
-        keys = updates_sizes_dirs[0][0].keys()
+        keys = updates_sizes[0][0].keys()
         agg = {}
         for k in keys:
             s_k = None
-            for (upd, _, _), w in zip(updates_sizes_dirs, weights):
+            for (upd, _), w in zip(updates_sizes, weights):
                 term = upd[k] * w
                 s_k = term if s_k is None else (s_k + term)
             agg[k] = s_k
-        return agg
+
+        return agg, weights
 
 
 class FLCLient:
@@ -198,6 +164,7 @@ class FLCLient:
         self.results = init_results(self.num_classes)
         self.device = device
 
+        # FedBN: BN params stay local
         self.bn_keys = get_bn_state_dict_keys(self.model)
 
         self.dataset = EuroSATOneHotDataset(train_subset, num_classes=self.num_classes)
@@ -223,41 +190,22 @@ class FLCLient:
         )
 
     def set_model(self, model: torch.nn.Module):
+        """
+        FedBN broadcast:
+        copy all global parameters EXCEPT BN params/buffers.
+        """
         local_sd = self.model.state_dict()
         global_sd = model.state_dict()
 
         for k in global_sd.keys():
-            if is_modulation_key(k):
-                continue
             if k in self.bn_keys:
                 continue
             local_sd[k] = global_sd[k].detach().clone()
 
         self.model.load_state_dict(local_sd, strict=True)
 
-    def _get_mod_vector(self) -> torch.Tensor:
-        vec = []
-        with torch.no_grad():
-            for name, p in self.model.named_parameters():
-                if is_modulation_key(name) and (name.endswith("gamma") or name.endswith("beta")):
-                    vec.append(p.detach().float().view(-1).cpu())
-        if vec:
-            return torch.cat(vec)
-        return torch.zeros(1)
-
-    def _unit_dir_from_delta(self, d: torch.Tensor) -> torch.Tensor:
-        n = d.norm()
-        if float(n.item()) < 1e-12:
-            v = self._get_mod_vector()
-            vn = v.norm()
-            if float(vn.item()) < 1e-12:
-                return torch.ones(1)
-            return v / (vn + 1e-12)
-        return d / (n + 1e-12)
-
     def train_one_round(self, epochs: int, validate: bool = False):
         state_before = copy.deepcopy(self.model.state_dict())
-        mod_before = self._get_mod_vector()
 
         self.optimizer = self.optimizer_constructor(self.model.parameters(), **self.optimizer_kwargs)
         self.criterion = self.criterion_constructor(**self.criterion_kwargs)
@@ -271,16 +219,11 @@ class FLCLient:
             report = self.validation_personalized()
             self.results = update_results(self.results, report, self.num_classes)
 
-        mod_after = self._get_mod_vector()
-        dmod = (mod_after - mod_before)
-        mod_unit_dir = self._unit_dir_from_delta(dmod)
-
         state_after = self.model.state_dict()
 
         model_update = {}
         for key, value_before in state_before.items():
-            if is_modulation_key(key):
-                continue
+            # FedBN: do not aggregate BN parameters/buffers
             if key in self.bn_keys:
                 continue
 
@@ -288,7 +231,7 @@ class FLCLient:
             diff = value_after.type(torch.DoubleTensor) - value_before.type(torch.DoubleTensor)
             model_update[key] = diff
 
-        return model_update, len(self.dataset), mod_unit_dir
+        return model_update, len(self.dataset)
 
     def train_epoch(self):
         self.model.train()
@@ -344,7 +287,6 @@ class GlobalClient:
         dataset_filter: str = "eurosat",
         state_dict_path: Optional[str] = None,
         results_path: Optional[str] = None,
-        align_power: float = 2.0,
         dirichlet_alpha: float = 0.3,
         min_client_samples: int = 20,
         seed: int = 42,
@@ -356,7 +298,7 @@ class GlobalClient:
         self.num_classes = num_classes
         self.dataset_filter = dataset_filter
 
-        self.aggregator = Aggregator(eps=1e-12, align_power=align_power, clip_align_min=0.0)
+        self.aggregator = FedBNAggregator(eps=1e-12)
         self.results = init_results(self.num_classes)
 
         transform = transforms.Compose([
@@ -372,14 +314,11 @@ class GlobalClient:
 
         total_size = len(full_dataset)
         all_indices = np.arange(total_size)
-
-        # EuroSAT labels
-        # For torchvision datasets like EuroSAT, labels are in .targets
         all_targets = np.array(full_dataset.targets)
 
         rng = np.random.default_rng(seed)
 
-        # Global train/test split first
+        # Global train/test split
         rng.shuffle(all_indices)
         train_size = int(0.8 * total_size)
         train_indices = all_indices[:train_size]
@@ -387,7 +326,7 @@ class GlobalClient:
 
         train_targets = all_targets[train_indices]
 
-        # Non-IID split among clients on the TRAIN portion only
+        # Same non-IID distribution method as before: Dirichlet split on train set
         client_relative_splits = dirichlet_non_iid_split(
             labels=train_targets,
             num_clients=len(csv_paths),
@@ -477,6 +416,7 @@ class GlobalClient:
 
             self.communication_round(epochs)
 
+            # FedBN broadcast: send non-BN params only
             for client in self.clients:
                 client.set_model(self.model)
 
@@ -507,17 +447,16 @@ class GlobalClient:
         return self.model, last_out
 
     def communication_round(self, epochs: int):
-        updates_sizes_dirs = [client.train_one_round(epochs) for client in self.clients]
+        updates_sizes = [client.train_one_round(epochs) for client in self.clients]
 
-        weights, cosines = self.aggregator.compute_option_a_weights(updates_sizes_dirs)
+        weights = None
+        update_aggregation, weights = self.aggregator.aggregate(updates_sizes)
 
-        print("\nAggregation weights (Option A: size × similarity of Δmod)")
-        for i, (client, w, cos_val, tup) in enumerate(zip(self.clients, weights, cosines, updates_sizes_dirs)):
-            _, sz, _ = tup
-            print(f"Client {i} ({client.dataset_filter}) | size={sz} | cos={cos_val:.4f} | weight={w:.4f}")
+        print("\nFedBN aggregation weights")
+        for i, (client, w, tup) in enumerate(zip(self.clients, weights, updates_sizes)):
+            _, sz = tup
+            print(f"Client {i} ({client.dataset_filter}) | train_size={sz} | weight={w:.4f}")
         print(f"Sum of weights: {sum(weights):.4f}\n")
-
-        update_aggregation = self.aggregator.aggregate_with_weights(updates_sizes_dirs, weights)
 
         global_state_dict = self.model.state_dict()
         for key, update in update_aggregation.items():
@@ -532,5 +471,11 @@ class GlobalClient:
     def save_results(self):
         if not Path(self.results_path).parent.is_dir():
             Path(self.results_path).parent.mkdir(parents=True)
-        res = {"global": self.results, "clients": self.client_results, "train_time": self.train_time}
+
+        client_results = [client.get_validation_results() for client in self.clients]
+        res = {
+            "global": self.results,
+            "clients": client_results,
+            "train_time": self.train_time,
+        }
         torch.save(res, self.results_path)
